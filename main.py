@@ -247,26 +247,40 @@ class SmartTradingApp:
         """Display agent consensus and recommendations"""
         try:
             # Get consensus from all agents
-            consensus_data = st.session_state.consensus_controller.get_consensus(
-                st.session_state.selected_symbols[0] if st.session_state.selected_symbols else 'AAPL'
-            )
-            
+            if not hasattr(st.session_state, "_consensus_cache"):
+                st.session_state._consensus_cache = asyncio.run(st.session_state.consensus_controller.get_consensus(
+                    st.session_state.selected_symbols[0] if st.session_state.selected_symbols else 'AAPL'
+                ))
+
+            consensus_data = st.session_state._consensus_cache
+
             for agent_name, recommendation in consensus_data.items():
                 agent_color = {
                     'Short-Term Agent': '#ff4444',
-                    'Swing Agent': '#ffaa44', 
+                    'Swing Agent': '#ffaa44',
                     'Macro Agent': '#44ff44'
                 }.get(agent_name, '#4444ff')
-                
+
+                # Defensive programming for recommendation type
+                if isinstance(recommendation, dict):
+                    action = recommendation.get('action', 'HOLD')
+                    confidence = recommendation.get('confidence', 0.5)
+                    reasoning = recommendation.get('reasoning', 'Analysis in progress...')
+                else:
+                    # When recommendation is a simple string
+                    action = recommendation
+                    confidence = 0.5
+                    reasoning = "Analysis pending or not provided."
+
+                # Use action, confidence, reasoning for rendering here
                 st.markdown(f"""
-                <div class="agent-card">
-                    <h4 style="color: {agent_color};">{agent_name}</h4>
-                    <p><strong>Action:</strong> {recommendation.get('action', 'HOLD')}</p>
-                    <p><strong>Confidence:</strong> {recommendation.get('confidence', 0.5):.1%}</p>
-                    <p><strong>Reasoning:</strong> {recommendation.get('reasoning', 'Analysis in progress...')}</p>
-                </div>
+                #### {agent_name}
+                **Action:** {action}
+                **Confidence:** {confidence:.1%}
+                **Reasoning:** {reasoning}
                 """, unsafe_allow_html=True)
-                
+
+
         except Exception as e:
             st.error(f"Error loading agent consensus: {str(e)}")
     

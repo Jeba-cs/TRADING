@@ -16,8 +16,18 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
 import warnings
-import time
 warnings.filterwarnings('ignore')
+
+# Import our custom modules
+from config.settings import *
+from agents.consensus_controller import ConsensusController
+from agents.chatbot_agent import TradingChatbot
+from data.data_manager import DataManager
+from ui.dashboard import TradingDashboard
+from ui.chatbot_ui import ChatbotInterface
+from utils.llm_handler import LLMHandler
+from models.portfolio import Portfolio
+from risk_management.risk_controller import RiskController
 
 # Configure Streamlit page
 st.set_page_config(
@@ -74,18 +84,35 @@ st.markdown("""
 class SmartTradingApp:
     def __init__(self):
         self.initialize_session_state()
+        self.setup_components()
     
     def initialize_session_state(self):
         """Initialize Streamlit session state variables"""
-        if 'selected_symbols' not in st.session_state:
-            st.session_state.selected_symbols = ['AAPL', 'TSLA', 'GOOGL', 'MSFT', 'AMZN']
-        if 'chat_history' not in st.session_state:
-            st.session_state.chat_history = []
+        if 'portfolio' not in st.session_state:
+            st.session_state.portfolio = Portfolio()
+        if 'consensus_controller' not in st.session_state:
+            st.session_state.consensus_controller = ConsensusController()
+        if 'chatbot' not in st.session_state:
+            st.session_state.chatbot = TradingChatbot()
+        if 'data_manager' not in st.session_state:
+            st.session_state.data_manager = DataManager()
+        if 'risk_controller' not in st.session_state:
+            st.session_state.risk_controller = RiskController()
         if 'trading_history' not in st.session_state:
             st.session_state.trading_history = []
+        if 'chat_history' not in st.session_state:
+            st.session_state.chat_history = []
+        if 'selected_symbols' not in st.session_state:
+            st.session_state.selected_symbols = ['AAPL', 'TSLA', 'GOOGL', 'MSFT', 'AMZN']
         if 'auto_trading' not in st.session_state:
             st.session_state.auto_trading = False
-    
+
+    def setup_components(self):
+        selected_symbols = ['AAPL', 'TSLA', 'GOOGL', 'MSFT']  # Replace with your dynamic symbol list if you have
+        self.dashboard = TradingDashboard(selected_symbols)
+        self.chatbot_ui = ChatbotInterface()
+        # ...
+
     def render_header(self):
         """Render main application header"""
         st.markdown("""
@@ -138,6 +165,22 @@ class SmartTradingApp:
             value=st.session_state.auto_trading
         )
         
+        if st.session_state.auto_trading:
+            st.sidebar.success("🟢 Auto Trading Active")
+        else:
+            st.sidebar.info("🔵 Manual Mode")
+        
+        # Portfolio Summary
+        st.sidebar.subheader("💼 Portfolio Summary")
+        portfolio_value = st.session_state.portfolio.get_total_value()
+        daily_pnl = st.session_state.portfolio.get_daily_pnl()
+        
+        st.sidebar.metric(
+            "Portfolio Value", 
+            f"${portfolio_value:,.2f}",
+            f"{daily_pnl:+.2f}%"
+        )
+        
         return {
             'trading_mode': trading_mode,
             'max_position_size': max_position_size,
@@ -187,100 +230,108 @@ class SmartTradingApp:
         with col3:
             st.subheader("⚡ Quick Actions")
             self.render_quick_actions()
+            
+            st.subheader("🎲 Risk Metrics")
+            self.render_risk_metrics()
     
     def render_agent_consensus(self):
         """Display agent consensus and recommendations"""
-        agents_data = {
-            'Short-Term Agent': {
-                'action': 'BUY',
-                'confidence': 0.75,
-                'reasoning': 'Strong momentum indicators with RSI oversold conditions'
-            },
-            'Swing Agent': {
-                'action': 'HOLD', 
-                'confidence': 0.60,
-                'reasoning': 'Mixed signals from technical patterns, wait for breakout'
-            },
-            'Macro Agent': {
-                'action': 'BUY',
-                'confidence': 0.85,
-                'reasoning': 'Strong fundamentals and positive economic outlook'
-            }
-        }
-        
-        for agent_name, data in agents_data.items():
-            color = {'BUY': '#4CAF50', 'SELL': '#F44336', 'HOLD': '#FF9800'}.get(data['action'], '#2196F3')
+        try:
+            # Get consensus from all agents
+            consensus_data = st.session_state.consensus_controller.get_consensus(
+                st.session_state.selected_symbols[0] if st.session_state.selected_symbols else 'AAPL'
+            )
             
-            st.markdown(f"""
-            <div class="agent-card">
-                <h4 style="color: {color};">{agent_name}</h4>
-                <p><strong>Action:</strong> {data['action']}</p>
-                <p><strong>Confidence:</strong> {data['confidence']:.1%}</p>
-                <p><strong>Reasoning:</strong> {data['reasoning']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            for agent_name, recommendation in consensus_data.items():
+                agent_color = {
+                    'Short-Term Agent': '#ff4444',
+                    'Swing Agent': '#ffaa44', 
+                    'Macro Agent': '#44ff44'
+                }.get(agent_name, '#4444ff')
+                
+                st.markdown(f"""
+                <div class="agent-card">
+                    <h4 style="color: {agent_color};">{agent_name}</h4>
+                    <p><strong>Action:</strong> {recommendation.get('action', 'HOLD')}</p>
+                    <p><strong>Confidence:</strong> {recommendation.get('confidence', 0.5):.1%}</p>
+                    <p><strong>Reasoning:</strong> {recommendation.get('reasoning', 'Analysis in progress...')}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+        except Exception as e:
+            st.error(f"Error loading agent consensus: {str(e)}")
     
     def render_market_overview(self):
         """Display market overview with key metrics"""
-        market_data = {
-            'Symbol': st.session_state.selected_symbols[:5],
-            'Price': [150.25, 235.67, 2834.50, 338.20, 3245.80],
-            'Change': ['+2.5%', '-1.2%', '+0.8%', '+3.1%', '-0.5%'],
-            'Volume': ['45.2M', '23.8M', '12.4M', '28.9M', '18.7M']
-        }
-        
-        df = pd.DataFrame(market_data)
-        st.dataframe(df, use_container_width=True)
+        try:
+            # Create sample market data
+            market_data = {
+                'Symbol': st.session_state.selected_symbols[:5],
+                'Price': [150.25, 235.67, 2834.50, 338.20, 3245.80],
+                'Change': ['+2.5%', '-1.2%', '+0.8%', '+3.1%', '-0.5%'],
+                'Volume': ['45.2M', '23.8M', '12.4M', '28.9M', '18.7M']
+            }
+            
+            df = pd.DataFrame(market_data)
+            st.dataframe(df, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error loading market data: {str(e)}")
     
     def render_price_charts(self):
         """Render interactive price charts"""
-        if st.session_state.selected_symbols:
-            selected_symbol = st.selectbox(
-                "Select Symbol for Chart:",
-                st.session_state.selected_symbols,
-                key="chart_symbol"
-            )
-            
-            # Generate sample price data
-            dates = pd.date_range(
-                start=datetime.now() - timedelta(days=30),
-                end=datetime.now(),
-                freq='D'
-            )
-            
-            import numpy as np
-            np.random.seed(42)
-            base_price = 150.0
-            price_changes = np.random.normal(0, 2, len(dates))
-            prices = [base_price]
-            
-            for change in price_changes[1:]:
-                new_price = prices[-1] * (1 + change/100)
-                prices.append(max(new_price, 10))
-            
-            # Create line chart
-            fig = go.Figure(data=go.Scatter(
-                x=dates,
-                y=prices,
-                mode='lines',
-                line=dict(color='#2196f3', width=2),
-                name=selected_symbol
-            ))
-            
-            fig.update_layout(
-                title=f"{selected_symbol} Price Chart",
-                xaxis_title="Date",
-                yaxis_title="Price ($)",
-                height=400,
-                showlegend=False
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+        try:
+            if st.session_state.selected_symbols:
+                selected_symbol = st.selectbox(
+                    "Select Symbol for Chart:",
+                    st.session_state.selected_symbols,
+                    key="chart_symbol"
+                )
+                
+                # Generate sample price data
+                dates = pd.date_range(
+                    start=datetime.now() - timedelta(days=30),
+                    end=datetime.now(),
+                    freq='D'
+                )
+                
+                # Create realistic price movements
+                import numpy as np
+                np.random.seed(42)
+                base_price = 150.0
+                price_changes = np.random.normal(0, 2, len(dates))
+                prices = [base_price]
+                
+                for change in price_changes[1:]:
+                    new_price = prices[-1] * (1 + change/100)
+                    prices.append(max(new_price, 10))  # Minimum price of $10
+                
+                # Create candlestick chart
+                fig = go.Figure(data=go.Scatter(
+                    x=dates,
+                    y=prices,
+                    mode='lines',
+                    line=dict(color='#2196f3', width=2),
+                    name=selected_symbol
+                ))
+                
+                fig.update_layout(
+                    title=f"{selected_symbol} Price Chart",
+                    xaxis_title="Date",
+                    yaxis_title="Price ($)",
+                    height=400,
+                    showlegend=False
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+        except Exception as e:
+            st.error(f"Error rendering charts: {str(e)}")
     
     def render_recent_trades(self):
         """Display recent trading activity"""
         if st.session_state.trading_history:
-            df = pd.DataFrame(st.session_state.trading_history[-10:])
+            df = pd.DataFrame(st.session_state.trading_history[-10:])  # Show last 10 trades
             st.dataframe(df, use_container_width=True)
         else:
             st.info("No recent trades. Start trading to see history here.")
@@ -293,6 +344,10 @@ class SmartTradingApp:
             symbol = st.selectbox("Symbol:", st.session_state.selected_symbols)
             action = st.selectbox("Action:", ["BUY", "SELL"])
             quantity = st.number_input("Quantity:", min_value=1, value=100)
+            order_type = st.selectbox("Order Type:", ["MARKET", "LIMIT"])
+            
+            if order_type == "LIMIT":
+                limit_price = st.number_input("Limit Price:", min_value=0.01, value=100.0)
             
             submitted = st.form_submit_button("Execute Trade")
             
@@ -302,11 +357,37 @@ class SmartTradingApp:
                     'symbol': symbol,
                     'action': action,
                     'quantity': quantity,
+                    'type': order_type,
                     'status': 'EXECUTED'
                 }
                 
+                if order_type == "LIMIT":
+                    trade_data['limit_price'] = limit_price
+                
                 st.session_state.trading_history.append(trade_data)
                 st.success(f"✅ {action} order for {quantity} shares of {symbol} executed!")
+        
+        # Emergency Actions
+        st.markdown("### Emergency Actions")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🚨 Close All Positions", type="secondary"):
+                st.warning("All positions closed!")
+        
+        with col2:
+            if st.button("⏸️ Pause Trading", type="secondary"):
+                st.session_state.auto_trading = False
+                st.info("Auto trading paused!")
+    
+    def render_risk_metrics(self):
+        """Display risk management metrics"""
+        risk_data = st.session_state.risk_controller.get_risk_metrics()
+        
+        st.metric("Portfolio Beta", f"{risk_data.get('beta', 1.2):.2f}")
+        st.metric("VaR (1-day)", f"${risk_data.get('var_1d', 2500):,.0f}")
+        st.metric("Sharpe Ratio", f"{risk_data.get('sharpe', 1.8):.2f}")
+        st.metric("Max Drawdown", f"{risk_data.get('max_drawdown', -5.2):.1f}%")
     
     def render_chatbot_interface(self):
         """Render AI chatbot interface"""
@@ -314,7 +395,7 @@ class SmartTradingApp:
         st.markdown("Ask me anything about trading, market analysis, or specific stocks!")
         
         # Chat history display
-        for message in st.session_state.chat_history[-10:]:
+        for message in st.session_state.chat_history[-10:]:  # Show last 10 messages
             if message['type'] == 'user':
                 st.markdown(f"""
                 <div class="chat-message user-message">
@@ -338,66 +419,59 @@ class SmartTradingApp:
             submitted = st.form_submit_button("Send Message")
             
             if submitted and user_input:
-                # Add user message
+                # Add user message to history
                 st.session_state.chat_history.append({
                     'type': 'user',
                     'content': user_input,
                     'timestamp': datetime.now()
                 })
                 
-                # Generate AI response (simplified)
-                ai_response = self.generate_ai_response(user_input)
-                st.session_state.chat_history.append({
-                    'type': 'bot',
-                    'content': ai_response,
-                    'timestamp': datetime.now()
-                })
-                st.rerun()
+                # Get AI response
+                try:
+                    response = st.session_state.chatbot.get_response(user_input)
+                    st.session_state.chat_history.append({
+                        'type': 'bot',
+                        'content': response,
+                        'timestamp': datetime.now()
+                    })
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error getting AI response: {str(e)}")
+        
+        # Quick question buttons
+        st.markdown("### Quick Questions")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📊 Market Analysis"):
+                self.handle_quick_question("Give me a quick market analysis for today")
+        
+        with col2:
+            if st.button("💡 Stock Suggestions"):
+                self.handle_quick_question("Suggest some stocks to watch today")
+        
+        with col3:
+            if st.button("⚠️ Risk Assessment"):
+                self.handle_quick_question("Assess the current market risk level")
     
-    def generate_ai_response(self, user_input):
-        """Generate AI response (simplified version)"""
-        user_lower = user_input.lower()
-        
-        if any(symbol in user_lower for symbol in ['aapl', 'apple']):
-            return """📊 **AAPL Analysis**
-
-Based on current market conditions:
-
-**Short-term outlook:** Strong momentum with RSI at healthy levels. Recent earnings beat expectations.
-
-**Technical levels:** Support at $150, resistance at $175. Currently trading in uptrend channel.
-
-**Recommendation:** CAUTIOUS BUY
-- Entry: $150-155 range
-- Target: $170-175 (10-12% upside)
-- Stop: $145 (risk management)
-
-💡 *Consider position sizing - this is analysis, not financial advice!*"""
-        
-        elif 'market' in user_lower and 'outlook' in user_lower:
-            return """🌐 **Market Outlook**
-
-Current market environment shows:
-
-**Sentiment:** Cautiously optimistic with mixed signals
-**Key drivers:** Fed policy, earnings season, economic data
-**Sectors:** Tech leading, Energy lagging
-**Risk factors:** Geopolitical tensions, inflation concerns
-
-**Strategy:** Focus on quality stocks with strong fundamentals. Maintain defensive positioning.
-
-📈 *Stay diversified and monitor key support levels!*"""
-        
-        else:
-            return """I'm here to help with your trading questions! 
-
-I can assist with:
-• Stock analysis (AAPL, TSLA, GOOGL, etc.)
-• Market outlook and trends  
-• Trading strategies and risk management
-• Technical and fundamental analysis
-
-Feel free to ask about specific stocks or trading concepts!"""
+    def handle_quick_question(self, question):
+        """Handle quick question button clicks"""
+        try:
+            st.session_state.chat_history.append({
+                'type': 'user',
+                'content': question,
+                'timestamp': datetime.now()
+            })
+            
+            response = st.session_state.chatbot.get_response(question)
+            st.session_state.chat_history.append({
+                'type': 'bot',
+                'content': response,
+                'timestamp': datetime.now()
+            })
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error processing quick question: {str(e)}")
     
     def render_analytics_view(self):
         """Render analytics and performance view"""
@@ -409,7 +483,7 @@ Feel free to ask about specific stocks or trading concepts!"""
             # Portfolio Performance Chart
             st.markdown("#### Portfolio Performance")
             dates = pd.date_range(start=datetime.now() - timedelta(days=30), end=datetime.now(), freq='D')
-            performance = [100 * (1.05 ** (i/30)) for i in range(len(dates))]
+            performance = [100 * (1.05 ** (i/30)) for i in range(len(dates))]  # 5% monthly growth
             
             fig = px.line(
                 x=dates, 
@@ -444,9 +518,9 @@ Feel free to ask about specific stocks or trading concepts!"""
         with col2:
             st.metric("Win Rate", "68%", "3%")
         with col3:
-            st.metric("Sharpe Ratio", "1.8", "0.2")
+            st.metric("Avg Hold Time", "5.2 days", "-0.8 days")
         with col4:
-            st.metric("Max Drawdown", "-5.2%", None)
+            st.metric("Best Trade", "+$2,450", None)
     
     def render_settings_view(self):
         """Render application settings"""
@@ -455,32 +529,54 @@ Feel free to ask about specific stocks or trading concepts!"""
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### Trading Configuration")
-            st.slider("Default Position Size (%)", 1, 20, 5)
-            st.slider("Stop Loss (%)", 1, 10, 3)
-            st.selectbox("Default Timeframe", ["1h", "4h", "1d", "1w"])
-            st.checkbox("Enable Notifications")
+            st.markdown("#### API Configuration")
+            with st.expander("Market Data APIs"):
+                st.text_input("Alpha Vantage API Key", type="password", placeholder="Enter API key")
+                st.text_input("Yahoo Finance (Free)", disabled=True, value="Enabled")
+                st.text_input("IEX Cloud API Key", type="password", placeholder="Enter API key")
+            
+            with st.expander("AI/LLM APIs"):
+                ai_provider = st.selectbox("AI Provider", ["OpenAI", "Google Gemini", "Anthropic Claude", "Local LLM"])
+                st.text_input(f"{ai_provider} API Key", type="password", placeholder="Enter API key")
         
         with col2:
-            st.markdown("#### API Configuration")
-            st.text_input("OpenAI API Key", type="password")
-            st.text_input("Alpha Vantage Key", type="password") 
-            st.selectbox("Data Provider", ["Yahoo Finance", "Alpha Vantage", "IEX Cloud"])
-            st.number_input("Request Timeout (s)", min_value=5, max_value=60, value=30)
+            st.markdown("#### Trading Settings")
+            with st.expander("Execution Settings"):
+                st.number_input("Order Timeout (seconds)", value=30)
+                st.selectbox("Default Order Type", ["MARKET", "LIMIT", "STOP"])
+                st.checkbox("Enable Pre-market Trading")
+                st.checkbox("Enable After-hours Trading")
+            
+            with st.expander("Notification Settings"):
+                st.checkbox("Email Notifications", value=True)
+                st.checkbox("SMS Alerts")
+                st.checkbox("Desktop Notifications", value=True)
+                st.text_input("Email Address", placeholder="your.email@example.com")
         
-        if st.button("💾 Save Settings"):
+        # Save Settings Button
+        if st.button("💾 Save Settings", type="primary"):
             st.success("Settings saved successfully!")
     
     def run(self):
         """Main application entry point"""
-        # Render header
-        self.render_header()
-        
-        # Render sidebar and get settings
-        settings = self.render_sidebar()
-        
-        # Render main dashboard
-        self.render_main_dashboard(settings)
+        try:
+            # Render header
+            self.render_header()
+            
+            # Render sidebar and get settings
+            settings = self.render_sidebar()
+            
+            # Render main dashboard
+            self.render_main_dashboard(settings)
+            
+            # Auto-refresh for live data (every 30 seconds)
+            if st.session_state.auto_trading:
+                time.sleep(30)
+                st.rerun()
+                
+        except Exception as e:
+            st.error(f"Application Error: {str(e)}")
+            st.info("Please refresh the page or contact support if the error persists.")
 
 def main():
     """Application entry point"""

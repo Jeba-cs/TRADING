@@ -17,6 +17,13 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
+# Add this import at the top of main.py (around line 15)
+import time
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Import our custom modules
 from config.settings import *
@@ -173,12 +180,14 @@ class SmartTradingApp:
         # Portfolio Summary
         st.sidebar.subheader("💼 Portfolio Summary")
         portfolio_value = st.session_state.portfolio.get_total_value()
-        daily_pnl = st.session_state.portfolio.get_daily_pnl()
-        
+        daily_pnl_dict = st.session_state.portfolio.get_daily_pnl()
+        latest_pnl = list(daily_pnl_dict.values())[-1] if daily_pnl_dict else 0.0
+        pnl_percentage = (latest_pnl / portfolio_value * 100) if portfolio_value > 0 else 0.0
+
         st.sidebar.metric(
-            "Portfolio Value", 
+            "Portfolio Value",
             f"${portfolio_value:,.2f}",
-            f"{daily_pnl:+.2f}%"
+            f"{pnl_percentage:+.2f}%"  # ✅ Now using actual percentage
         )
         
         return {

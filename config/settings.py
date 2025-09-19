@@ -6,7 +6,9 @@ Configuration settings for the Smart Trading System
 import os
 from typing import Dict, Any
 from dataclasses import dataclass
+from dotenv import load_dotenv
 
+load_dotenv()
 @dataclass
 class TradingConfig:
     """Trading configuration parameters"""
@@ -70,3 +72,15 @@ trading_config = TradingConfig()
 api_config = APIConfig()
 agent_config = AgentConfig()
 risk_config = RiskConfig()
+
+# Trading Configuration
+TRADING_MODE = os.getenv("TRADING_MODE", "PAPER")
+DEFAULT_PORTFOLIO_VALUE = float(os.getenv("DEFAULT_PORTFOLIO_VALUE", "100000"))
+
+# LLM Configuration
+DEFAULT_LLM_PROVIDER = "google"  # Use Gemini by default
+DEFAULT_MODEL = "gemini-pro"
+
+# Risk Management
+MAX_POSITION_SIZE = 0.1
+DEFAULT_STOP_LOSS = 0.03
